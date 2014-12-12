@@ -14,16 +14,28 @@ class RioProtocol(LineOnlyReceiver):
 
     def lineReceived(self, line):
         try:
-            nodename, priority, last_update, state = line.split(",")
+            command, _, rest = line.partition(",")
         except:
             self.abortConnection()
             raise # should barf and complain
-        self.factory.rio_states.update_node(nodename, priority,
-                                            last_update, state)
+
+        if command == 'auth':
+            pass
+        elif command == 'ping':
+            try:
+                nodename, priority, last_update, state = rest.split(",")
+            except:
+                self.abortConnection()
+                raise # should barf and complain
+            self.factory.rio_states.update_node(nodename, priority,
+                                                last_update, state)
+        else:
+            self.abortConnection()
+            return
 
     def rio_states_change_hook(self, rio_states, new_state, master):
         the_line = ",".join(list(new_state))
-        self.sendLine(the_line)
+        self.sendLine("ping,%s" % the_line)
 
 class RioServerFactory(Factory):
     def __init__(self, rio_states):

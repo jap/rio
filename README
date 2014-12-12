@@ -1,0 +1,117 @@
+Run It Once
+===========
+
+Run It Once (rio) is a simple tool to make sure that in a cluster,
+jobs get executed on at least one of the nodes (and preferably only one.)
+
+It does this by having each node in the cluster connect to the other nodes
+in the cluster, and broadcasting about its own state every 5 seconds.
+This state can be influenced using a `checkfile`. This allows the
+administrator to remove a node from the election process easily (and
+automatically, if part of a node is failing for instance).
+
+Because the state of each node is broadcast to all other nodes, all nodes
+should have the same overview of all the nodes and their statuses in the
+network. By using an election algorithm, a master can be selected on any
+node.
+
+If the node elects itself as the master, it will create a `statefile`, which
+can then be used by cronjobs etc to determine if they should be run.
+
+In case of a network partition, there will be two sets of nodes, and each
+set will have its own master. This does mean that the job may be run twice,
+so please consider that when deploying this. It does however also mean that
+if the network is partitioned such that no quorum can be met by any
+partition, the job will be run!
+
+Configuration is done through the commandline::
+
+    $ riod -h
+    usage: riod [-h] [-L LOCAL_PORT] [-p PRIORITY] [-t TIMEOUT] [-n NODENAME]
+                [-c CHECK_FILE] [-s STATE_FILE]
+                nodes [nodes ...]
+    
+    Run It Once
+    
+    positional arguments:
+      nodes                 list of nodes to connect to (hostname:port)
+    
+    optional arguments:
+      -h, --help            show this help message and exit
+      -L LOCAL_PORT, --local-port LOCAL_PORT
+                            tcp-port on which to listen for connections (default:
+                            2343)
+      -p PRIORITY, --priority PRIORITY
+                            priority of this node (lower is preferred (default: 7)
+      -t TIMEOUT, --timeout TIMEOUT
+                            timeout (in seconds) after which inactive nodes will
+                            be considered gone (default: 10)
+      -n NODENAME, --nodename NODENAME
+                            nodename for identification (should be unique in a
+                            cluster) (default: rionode-jaspers-mbp.lan-%d)
+      -c CHECK_FILE, --check-file CHECK_FILE
+                            Filename of file which should be present for this node
+                            to advertise itself as active (default: /tmp/rio_ok)
+      -s STATE_FILE, --state-file STATE_FILE
+                            Filename of file which is created when this node is
+                            the active oe (default: /tmp/rio_active)
+    
+    
+So for example, you can start one node with::
+
+  $ riod -L 8001 localhost:8002 -s /tmp/rio1_active
+  INFO:rio.main:Node rionode-jaspers-mbp.lan-8001 starting!
+
+and in another terminal using::
+
+  $ riod -L 8002 localhost:8001 -s /tmp/rio2_active
+  INFO:rio.main:Node rionode-jaspers-mbp.lan-8002 starting!
+
+
+If you then, in a third terminal make sure that they both consider themselves up and running:
+
+  $ touch /tmp/rio_ok
+
+Now, one of the two nodes should become active::
+
+  INFO:rio.rio:Stepping up as master! (old master: None)
+
+and for the other node::
+
+  INFO:rio.rio:New master (not us): rionode-jaspers-mbp.lan-8001
+
+
+Note that a statefile exists now as well::
+
+  $ ls -l /tmp/rio*
+  -rw-r--r--  1 spaans  wheel  0 Dec 11 13:24 /tmp/rio1_active
+  -rw-r--r--  1 spaans  wheel  0 Dec 11 13:23 /tmp/rio_ok
+
+Killing the master node (just hit ^C) should evoke the following response from the other one (after the timeout)::
+
+INFO:rio.main:Removed timed out node rionode-jaspers-mbp.lan-8001
+INFO:rio.rio:Stepping up as master! (old master: rionode-jaspers-mbp.lan-8001)
+
+Note that two statefiles exist now::
+
+  -rw-r--r--  1 spaans  wheel  0 Dec 11 13:26 /tmp/rio1_active
+  -rw-r--r--  1 spaans  wheel  0 Dec 11 13:27 /tmp/rio2_active
+  -rw-r--r--  1 spaans  wheel  0 Dec 11 13:23 /tmp/rio_ok
+  
+A decent cron job should check the age of the statefile as well, and
+ignore it if it is too old.
+
+
+
+Details
+=======
+
+The master election process is simple:
+ - if no active nodes? no master :(
+ - group all active nodes by priority
+ - select the group of active nodes with the lowest priority
+ - only one node in the group? here's your master
+ - more than one node: sort them based on the md5 of the concatenated strings containing the nodename and priority, and pick the one with the lowest hash value.
+
+
+

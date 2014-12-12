@@ -16,7 +16,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'riod = rio.rio:main',
+            'riod = rio.main:main',
         ],
     },
 )

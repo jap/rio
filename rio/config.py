@@ -1,6 +1,9 @@
 import argparse
 import socket
 
+
+default_statefile = "/tmp/rio_active"
+default_checkfile = "/tmp/rio_ok"
 default_nodename = "rionode-%s-%%d" % socket.getfqdn()
 default_priority = 7
 default_rio_port = 2343 # just look at the map, 23S 43W
@@ -24,7 +27,21 @@ def build_parser():
                         default=default_nodename,
                         help='nodename for identification (should be unique in a cluster)')
 
+    parser.add_argument('-c', '--check-file', type=str,
+                        default=default_checkfile,
+                        help='Filename of file which should be present for this node to advertise itself as active')
+    parser.add_argument('-s', '--state-file', type=str,
+                        default=default_statefile,
+                        help='Filename of file which is created when this node is the active oe')
+
+
     parser.add_argument('nodes', type=str, nargs='+',
                         help='list of nodes to connect to (hostname:port)')
 
     return parser
+
+def run_parser(parser, args):
+    options = parser.parse_args(args)
+    if options.nodename == default_nodename:
+        options.nodename = default_nodename % options.local_port
+    return options

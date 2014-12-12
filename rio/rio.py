@@ -14,26 +14,38 @@ STATE_GONE = 0
 STATE_KO = 2
 STATE_OK = 3
 
+
 class MasterChecker(object):
     time = time.time
     master = None
+    state_file = None
 
-    def __init__(self, rio_states, nodename):
+    def __init__(self, rio_states, state_file):
         self.rio_states = rio_states
-        self.nodename = nodename
+        self.state_file = state_file
 
     def check(self):
         new_master = getattr(self.rio_states.master, 'nodename', None)
+        nodename = self.rio_states.nodename
 
         if self.master == new_master:
+            if self.master == nodename:
+                # we're still the master!
+                self.touch_file()
             return
-        if self.nodename == self.master:
+
+        if nodename == self.master:
             log.info("Stepping down as master! (new master: %s)",
                      new_master)
+            try:
+                os.unlink(self.state_file)
+            except:
+                log.exception("Failure unlinking state_file")
 
-        if self.nodename == new_master:
+        if nodename == new_master:
             log.info("Stepping up as master! (old master: %s)",
                      self.master)
+            self.touch_file()
         else:
             if not new_master:
                 log.warning("No more master available!")
@@ -41,34 +53,41 @@ class MasterChecker(object):
 
         self.master = new_master
 
+    def touch_file(self):
+        try:
+            with file(self.state_file, "w") as f:
+                pass
+        except:
+            log.exception("Failure creating state_file")
+
+
 class FileChecker(object):
     time = time.time
 
-    def __init__(self, rio_states, nodename, priority, filename="/tmp/riocheck"):
-        self.rio_states = rio_states
-        self.nodename = nodename
-        self.priority = priority
+    def __init__(self, filename="/tmp/riocheck"):
         self.filename = filename
 
     def check(self):
         try:
             r = os.stat(self.filename)
-            if r:
-                return self.rio_states.update_node(self.nodename, str(self.priority),
-                                                   str(self.time()), str(STATE_OK))
+            return STATE_OK
         except:
-            pass
-        return self.rio_states.update_node(self.nodename, str(self.priority),
-                                           str(self.time()), str(STATE_KO))
+            return STATE_KO
 
 
 class RioStates(object):
     time = time.time
-    threshold = 10
 
-    def __init__(self):
+    def __init__(self, nodename, priority, timeout):
         self.nodes = {}
         self.change_hooks = []
+        self.nodename = nodename
+        self.priority = str(priority)
+        self.timeout = timeout
+
+    def update_self(self, time, state):
+        return self.update_node(self.nodename, self.priority,
+                                time, state)
 
     def update_node(self, nodename, priority, last_update, state):
         # check that the input data is valid
@@ -83,9 +102,14 @@ class RioStates(object):
             #log.debug("No change, duplicate message?")
             return
 
-        if float(last_update) < self.time() - self.threshold or \
+        if float(last_update) < self.time() - self.timeout or \
            (last_state and float(new_state.update) <= float(last_state.update)):
             log.debug("Ignoring outdated report %r", new_state)
+            log.debug("Now-timeout: %s LU: %s", (self.time()-self.timeout),
+                      float(last_update))
+            log.debug("New state: %r", new_state)
+            log.debug("Old state: %r", last_state)
+
             return
 
 
@@ -107,6 +131,7 @@ class RioStates(object):
         for nodename, node in self.nodes.iteritems():
             if int(node.state) == STATE_OK:
                 nodes_by_prio[int(node.priority)].append(node)
+
         if not nodes_by_prio:
             return
 
@@ -120,26 +145,8 @@ class RioStates(object):
             return best_one
 
     def remove_outdated(self):
-        threshold = self.time() - self.threshold
+        threshold = self.time() - self.timeout
         for nodename, node in self.nodes.items():
             if float(node.update) < threshold:
                 del self.nodes[nodename]
                 yield nodename
-
-
-def main():
-    logging.basicConfig(level=logging.DEBUG)
-    rns = RioStates()
-    def print_updates(rns, new_state, master):
-        log.debug("After updating %s, new master is %s", new_state, master)
-    rns.change_hooks.append(print_updates)
-    rns.update_node("aap",1,2,2)
-    rns.update_node("noot",2,3,3)
-    rns.update_node("aap",1,3,3)
-    rns.update_node("mies",2,4,2)
-    rns.update_node("mies",2,4,2)
-    rns.update_node("mies",2,5,3)
-    rns.update_node("noot",2,6,3)
-    log.debug("Calling remove gives %r", list(rns.remove_outdated(4.5)))
-    log.debug("Calling remove gives %r", list(rns.remove_outdated(4.5)))
-    log.debug("States now is %r, %r", rns.nodes, rns.master)
